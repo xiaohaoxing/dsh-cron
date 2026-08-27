@@ -1,5 +1,5 @@
 {
-  "name": "@walltech/dsh-cron",
+  "name": "@dsh/cron",
   "version": "0.3.0",
   "description": "Cron executor plugin for DeepSeek Harness: durable cron job table, timezone-aware scheduler, natural-language-friendly management tools (cron_create/cron_list/cron_update/cron_delete/cron_pause/cron_resume), plus the P1 browser UI (scheduled-task list in the conversation header and sidebar).",
   "type": "module",

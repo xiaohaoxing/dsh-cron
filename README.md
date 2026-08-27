@@ -1,4 +1,4 @@
-# @walltech/dsh-cron
+# @dsh/cron
 
 DeepSeek Harness 的 cron 执行器插件：**全局持久化任务表 + 时区感知调度器 + 自然语言友好的管理工具**。
 
@@ -12,7 +12,7 @@ DeepSeek Harness 的 cron 执行器插件：**全局持久化任务表 + 时区�
 - 管理工具：`cron_create` / `cron_list` / `cron_update` / `cron_delete` / `cron_pause` / `cron_resume`
 - 事件：`cron/change`（任务表变更）、`cron/run`（`{ jobId, occurrence, status: started|ok|failed, sessionId?, error? }`）
 - **P1 浏览器 UI**：会话头部与侧边栏底部的「已安排」入口，点击打开**独立全屏页面**展示全部任务（下次/上次运行、暂停/恢复/删除），数据走宿主 `webServer` 上的 `/cron-api` REST + SSE 桥
-- 注入：`['agents', 'sessions', 'tools', 'sessionPersistence', 'webServer']`——`webServer` 在 inject 里保证 fiber 在 webserver 宿主激活后才运行（缺失时插件整体不激活，优雅降级）
+- 注入：`['agents', 'sessions', 'tools', 'sessionPersistence', 'webServer', 'agentPresets']`——`webServer` 在 inject 里保证 fiber 在 webserver 宿主激活后才运行（缺失时插件整体不激活，优雅降级）；`agentPresets` 让 run agent 通过 factory setup 钩子加入默认 preset（获得 bash 等核心工具）
 
 ## 目录
 
@@ -26,14 +26,14 @@ lib/
   api.js      /cron-api REST + SSE 桥（注册到宿主 webServer）
   client.js   浏览器 half（module-loader bundle 格式，P1「已安排」UI）
   index.js    Cordis function plugin 挂载（name/inject/apply）
-test/         node:test 单测（48 个用例）
+test/         node:test 单测（51 个用例）
 cordis.patch.yml  挂载样例
 ```
 
 ## 浏览器 UI（P1）
 
 `dsh.client` 双面声明让 `lib/client.js` 进入 `window.__DSH_BOOT__` 图，由
-`@deepseek-ai/dsh-client-modules` 在 `/plugins/@walltech/dsh-cron/client.js` 提供服务。
+`@deepseek-ai/dsh-client-modules` 在 `/plugins/@dsh/cron/client.js` 提供服务。
 客户端 bundle 以框架同款的 `window.__ModuleLoader__.load` 格式手写，**无需构建步骤**。
 
 注册位置（三个官方框架槽位，共用同一任务列表渲染 `JobListContent`，**无需 fork 侧边栏**）：
@@ -48,7 +48,7 @@ cordis.patch.yml  挂载样例
 > [slot-catalog.ts](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/extensions/cordis-client-runner/src/client/slot-catalog.ts)。
 > 浏览区只有 `sidebar.workspaces`（`single`，ui-workspace 独占，第三方注册会冲突）；
 > 第三方可用的框架级全屏面是 `shell.overlay`（`list`，additive）——独立页面即挂在这里。
-> 早期版本曾 fork 侧边栏增加 `sidebar.sections` 内嵌分组（`@walltech/dsh-client-ui-sidebar`），
+> 早期版本曾 fork 侧边栏增加 `sidebar.sections` 内嵌分组（`dsh-client-ui-sidebar`），
 > 已弃用并移除，发布为单包不再依赖任何框架 fork。
 
 数据桥（宿主 half 注册到 `ctx.webServer`，与 `/plugins/*` 同为本地 127.0.0.1 开放路由）：
@@ -72,7 +72,7 @@ GET    /cron-api/events        → SSE：change / run 事件（客户端收到�
 ⚠️ **不要直接 `pnpm add` 进 web profile**：桌面应用启动时会把 profile 的
 `package.json`/`node_modules` 重写为其管理的集合（dsh-remote 等捆绑插件），
 任何手工加进去的依赖会在下次启动被清除（日志表现为
-`Cannot find package '@walltech/dsh-cron' imported from .../profiles/web/`）。
+`Cannot find package '@dsh/cron' imported from .../profiles/web/`）。
 
 桌面端正确的持久化安装位置是**扁平 fallback 目录**
 `$DSH_HOME/profiles/node_modules/`（app-boot 的 `healProfilesModuleFallback`
@@ -80,8 +80,8 @@ GET    /cron-api/events        → SSE：change / run 事件（客户端收到�
 
 ```bash
 # 1. 符号链接到 fallback 目录（Node 从 profile 的父目录 walk 会命中它）
-mkdir -p "$DSH_HOME/profiles/node_modules/@walltech"
-ln -sfn /path/to/dsh-cron "$DSH_HOME/profiles/node_modules/@walltech/dsh-cron"
+mkdir -p "$DSH_HOME/profiles/node_modules/@dsh"
+ln -sfn /path/to/dsh-cron "$DSH_HOME/profiles/node_modules/@dsh/cron"
 
 # 2. 挂载（追加到 $DSH_HOME/profiles/web/cordis.patch.yml）
 ```
@@ -89,7 +89,7 @@ ln -sfn /path/to/dsh-cron "$DSH_HOME/profiles/node_modules/@walltech/dsh-cron"
 ```yaml
 - insert:
     - id: cron
-      name: '@walltech/dsh-cron'
+      name: '@dsh/cron'
       config:
         timezone: Asia/Shanghai   # 默认时区
         catchUp: false            # 是否补跑错过的 occurrence
@@ -134,7 +134,7 @@ cron_create({
 ## 开发
 
 ```bash
-node --test "test/*.test.js"   # 48 个用例（引擎 / store / runtime / service / api / tools）
+node --test "test/*.test.js"   # 51 个用例（引擎 / store / runtime / service / api / tools）
 ```
 
 `node_modules/` 下是指向 DSH 安装的符号链接（仅本地跑测试用；`files` 只发布 `lib`）。

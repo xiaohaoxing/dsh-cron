@@ -1,11 +1,11 @@
-# @walltech/dsh-cron — 挂载样例
+# @dsh/cron — 挂载样例
 #
 # 把下面这段 insert 追加到 profile 的用户 patch 层：
 #   $DSH_HOME/profiles/<name>/cordis.patch.yml
 # （桌面端即当前 GUI 使用的 profile，通常是 web）
 #
 # 安装依赖：
-#   dsh plugin --profile <name> add @walltech/dsh-cron
+#   dsh plugin --profile <name> add @dsh/cron
 #   （或桌面端 Plugins 页安装本地/GitHub 包）
 #
 # config 说明：
@@ -19,7 +19,7 @@
 
 - insert:
     - id: cron
-      name: '@walltech/dsh-cron'
+      name: '@dsh/cron'
       config:
         timezone: Asia/Shanghai
         catchUp: false
