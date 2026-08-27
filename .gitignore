@@ -1,0 +1,12 @@
+# dependencies (symlinks to a local DSH install, used only for running tests)
+node_modules/
+
+# logs / tooling
+*.log
+.gstack/
+
+# OS / editor
+.DS_Store
+
+# npm publish artifacts
+*.tgz

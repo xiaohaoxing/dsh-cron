@@ -1,0 +1,28 @@
+# @walltech/dsh-cron — 挂载样例
+#
+# 把下面这段 insert 追加到 profile 的用户 patch 层：
+#   $DSH_HOME/profiles/<name>/cordis.patch.yml
+# （桌面端即当前 GUI 使用的 profile，通常是 web）
+#
+# 安装依赖：
+#   dsh plugin --profile <name> add @walltech/dsh-cron
+#   （或桌面端 Plugins 页安装本地/GitHub 包）
+#
+# config 说明：
+#   root          cron 任务表目录，默认 dshHomePath('cron')（$DSH_HOME/cron）
+#   timezone      默认时区（IANA），未指定任务时区时使用，默认 'UTC'
+#   catchUp       重启/停机后是否补跑错过的 occurrence，默认 false（跳过）
+#   maxLiveRunAgents  执行后保留在活体注册表里的 run agent 上限，超出后释放最旧的
+#                （会话 JSONL 仍在磁盘，历史不丢），默认 20
+#   defaultModel  新建 run agent 的默认模型，默认 deepseek-v4-flash
+#   defaultProvider 默认 provider，默认 deepseek-official
+
+- insert:
+    - id: cron
+      name: '@walltech/dsh-cron'
+      config:
+        timezone: Asia/Shanghai
+        catchUp: false
+        maxLiveRunAgents: 20
+        defaultProvider: deepseek-official
+        defaultModel: deepseek-v4-flash
