@@ -57,5 +57,9 @@
   },
   "scripts": {
     "test": "node --test \"test/*.test.js\""
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/xiaohaoxing/dsh-cron.git"
   }
 }
