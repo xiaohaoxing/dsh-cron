@@ -21,9 +21,9 @@ function fakeAgent(sessionId) {
 }
 
 /** Mock cordis context: enough of agents/emit/logger for the runtime. */
-function makeCtx({ live = new Map(), onCreate, onResume } = {}) {
+function makeCtx({ live = new Map(), onCreate, onResume, agentPresets } = {}) {
   const observations = { emits: [], warns: [], created: [], resumed: [] }
-  return {
+  const ctx = {
     observations,
     logger: {
       warn: (message) => observations.warns.push(String(message)),
@@ -46,6 +46,8 @@ function makeCtx({ live = new Map(), onCreate, onResume } = {}) {
       },
     },
   }
+  if (agentPresets !== undefined) ctx.agentPresets = agentPresets
+  return ctx
 }
 
 function jobWith({ expression = '0 9 * * *', timezone = 'UTC', nextRunAt, target = { kind: 'new-chat' }, enabled = true, catchUp } = {}) {
@@ -145,6 +147,50 @@ test('runtime: new-chat run carries project cwd, provider, model, reasoningEffor
     assert.equal(created.agentOptions.provider, 'deepseek-official')
     assert.equal(created.agentOptions.model, 'deepseek-v4-flash')
     assert.equal(created.agentOptions.reasoningEffort, 'high')
+    await runtime.dispose()
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('runtime: run agents are joined to the default agent preset via the factory setup hook', async () => {
+  const root = tempRoot()
+  try {
+    const store = new CronStore({ logger: { warn: () => {} } }, root)
+    store.load()
+    store.upsert(jobWith({ nextRunAt: nowIso(Date.now() - 1000), target: { kind: 'new-chat' } }))
+    store.save()
+    const mounts = []
+    const agentPresets = { mount: async (agentCtx) => { mounts.push(agentCtx) } }
+    const ctx = makeCtx({ agentPresets })
+    const runtime = new CronRuntime(ctx, store, { catchUp: true })
+    runtime.start()
+    await settle()
+    assert.equal(ctx.observations.created.length, 1)
+    const created = ctx.observations.created[0]
+    assert.equal(typeof created.setup, 'function', 'create passes a factory setup hook')
+    const agentCtx = { id: 'cron-1-...' }
+    await created.setup(agentCtx)
+    assert.deepEqual(mounts, [agentCtx], 'setup joins the agent to the default preset')
+    await runtime.dispose()
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('runtime: existing-chat resume also passes the factory setup hook', async () => {
+  const root = tempRoot()
+  try {
+    const store = new CronStore({ logger: { warn: () => {} } }, root)
+    store.load()
+    const ctx = makeCtx()
+    store.upsert(jobWith({ nextRunAt: nowIso(Date.now() - 1000), target: { kind: 'existing-chat', sessionId: 'persisted-1' } }))
+    store.save()
+    const runtime = new CronRuntime(ctx, store, { catchUp: true })
+    runtime.start()
+    await settle()
+    assert.equal(ctx.observations.resumed.length, 1)
+    assert.equal(typeof ctx.observations.resumed[0].setup, 'function', 'resume passes a factory setup hook')
     await runtime.dispose()
   } finally {
     rmSync(root, { recursive: true, force: true })
