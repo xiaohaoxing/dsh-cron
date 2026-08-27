@@ -1,150 +1,120 @@
-# @dsh/cron
+# dsh-cron · 定时任务插件（已安排）
 
-DeepSeek Harness 的 cron 执行器插件：**全局持久化任务表 + 时区感知调度器 + 自然语言友好的管理工具**。
+给 **DeepSeek Harness** 加一个"定时任务"能力：让 AI 按你定的时间**自动干活**，不用你守在旁边。
 
-- 5 字段 cron 表达式（`minute hour day-of-month month day-of-week`），支持 `*`、`*/n`、`a-b`、`a,b`、`?`（dom/dow）、`JAN..DEC` / `SUN..SAT` 名称
-- IANA 时区感知（DST 跳时/重叠正确处理，算法与 `@deepseek-ai/dsh-schedule` 一致）
-- 任务表落盘 `$DSH_HOME/cron/jobs.json`，原子写（tmp + fsync + rename），崩溃不丢、不重跑已 claim 的 occurrence
-- 两种执行策略：
-  - `new-chat`（默认）：每次运行创建独立 agent 会话 `cron-<jobId>-<occurrence>`，可绑定工作目录（project）与模型/推理强度
-  - `existing-chat`：投递进目标会话（活体 agent 用 `runMaintenance`+`followup`，不在线则从持久化恢复后投递）
-- 漏跑策略：`catchUp: false`（默认）跳过错过的 occurrence 并记 `skipped` 历史；`catchUp: true` 补跑最早的错过 occurrence
-- 管理工具：`cron_create` / `cron_list` / `cron_update` / `cron_delete` / `cron_pause` / `cron_resume`
-- 事件：`cron/change`（任务表变更）、`cron/run`（`{ jobId, occurrence, status: started|ok|failed, sessionId?, error? }`）
-- **P1 浏览器 UI**：会话头部与侧边栏底部的「已安排」入口，点击打开**独立全屏页面**展示全部任务（下次/上次运行、暂停/恢复/删除），数据走宿主 `webServer` 上的 `/cron-api` REST + SSE 桥
-- 注入：`['agents', 'sessions', 'tools', 'sessionPersistence', 'webServer', 'agentPresets']`——`webServer` 在 inject 里保证 fiber 在 webserver 宿主激活后才运行（缺失时插件整体不激活，优雅降级）；`agentPresets` 让 run agent 通过 factory setup 钩子加入默认 preset（获得 bash 等核心工具）
+- 在对话里说一句"每天早上 9 点跑回归测试"，任务就建好了；
+- 到点自动开一个 AI 会话去执行，干完把结果发给你；
+- 侧边栏的「**已安排**」页面随时查看、暂停、编辑、删除任务。
 
-## 目录
+包名：`@dsh/cron` ｜ 协议：MIT
 
-```
-lib/
-  cron.js     纯函数 cron 引擎（零依赖：解析、next occurrence、describe、时区）
-  store.js    CronStore：磁盘任务表 + 校验 + 原子持久化
-  runtime.js  CronRuntime：定时唤醒、claim-then-execute、两种执行策略、并发尾串行化
-  service.js  共享变更核心：工具与 REST API 共用的校验/持久化代码路径
-  tools.js    六个管理工具注册（defineTool + closed-union 错误码）
-  api.js      /cron-api REST + SSE 桥（注册到宿主 webServer）
-  client.js   浏览器 half（module-loader bundle 格式，P1「已安排」UI）
-  index.js    Cordis function plugin 挂载（name/inject/apply）
-test/         node:test 单测（51 个用例）
-cordis.patch.yml  挂载样例
-```
+---
 
-## 浏览器 UI（P1）
+## 它能做什么
 
-`dsh.client` 双面声明让 `lib/client.js` 进入 `window.__DSH_BOOT__` 图，由
-`@deepseek-ai/dsh-client-modules` 在 `/plugins/@dsh/cron/client.js` 提供服务。
-客户端 bundle 以框架同款的 `window.__ModuleLoader__.load` 格式手写，**无需构建步骤**。
+举几个实际例子：
 
-注册位置（三个官方框架槽位，共用同一任务列表渲染 `JobListContent`，**无需 fork 侧边栏**）：
-
-| slot | 行为 |
+| 你想做的事 | 在对话里这么说 |
 |---|---|
-| `conversation.session.header.actions` | 会话头部「已安排」按钮（order 30） |
-| `sidebar.footer.action` | 侧边栏底部按钮，与 Settings 并列（wide 显示图标+文字 / rail 仅图标，order 20）。wide 模式下整个底部动作列表**纵向堆叠**（每个插件的入口各占一行，如 Remote / 已安排），由插件注入的 CSS 覆盖框架页脚容器 `.hHd-Xa_footerActions`（框架升级需复查该类名） |
-| `shell.overlay` | 「已安排」**独立页面**：点任一入口打开全屏页面列出全部任务（暂停/恢复/删除、刷新、Esc/遮罩关闭，order 10） |
+| 每天早上自动跑回归测试 | "每天早上 9 点跑一次回归测试并给出结论" |
+| 每天晚上总结当天工作 | "每天 21 点，遍历今天的会话总结工作写入飞书文档" |
+| 每小时巡检一遍服务 | "每小时检查一下后台服务的健康状态，有问题就报告" |
+| 每周一发周报素材 | "每周一早上把上周的会议纪要整理成周报给我" |
 
-> **官方槽位依据**：槽位清单见
-> [slot-catalog.ts](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/extensions/cordis-client-runner/src/client/slot-catalog.ts)。
-> 浏览区只有 `sidebar.workspaces`（`single`，ui-workspace 独占，第三方注册会冲突）；
-> 第三方可用的框架级全屏面是 `shell.overlay`（`list`，additive）——独立页面即挂在这里。
-> 早期版本曾 fork 侧边栏增加 `sidebar.sections` 内嵌分组（`dsh-client-ui-sidebar`），
-> 已弃用并移除，发布为单包不再依赖任何框架 fork。
+### 核心功能
 
-数据桥（宿主 half 注册到 `ctx.webServer`，与 `/plugins/*` 同为本地 127.0.0.1 开放路由）：
+- **自然语言创建**：不用学 cron 语法，直接说人话，AI 帮你翻译成任务；
+- **精确调度**：底层是标准 5 段 cron 表达式（`分 时 日 月 周`），支持"每天""每小时""每周一""每月 1 号"等常见频率，还带时区（默认 Asia/Shanghai）；
+- **两种执行方式**：
+  - **新聊天**（默认）：每次运行开一个独立会话干活，适合"跑任务"类；
+  - **现有聊天**：投递到指定会话里执行，适合"在某个对话里继续"类；
+- **可视化管理**：「已安排」全屏页面——分组列表（全部/已开启/已暂停）、一键新建、点开详情编辑（任务说明、运行方式、项目、模型、推理强度、频率、时区）、查看运行历史、暂停/恢复/删除；
+- **可靠不丢**：任务表持久化在磁盘，应用重启后任务照常；到点先记账再执行，崩溃不会重复跑同一时刻的任务；
+- **运行历史**：每次运行的成功/失败、会话、错误信息都记录下来。
 
-```
-GET    /cron-api/jobs          → { ok, jobs: [view+label], timezone }
-POST   /cron-api/jobs          → 创建（body = cron_create 参数）→ view
-PATCH  /cron-api/jobs/<id>     → 更新/暂停/恢复（body = 字段补丁）→ view
-DELETE /cron-api/jobs/<id>     → { ok, id, deleted }
-GET    /cron-api/events        → SSE：change / run 事件（客户端收到后重新拉取）
-```
+---
 
-- 变更与工具同一条 `service.js` 代码路径（一处校验/持久化，工具与 UI 行为一致）
-- 每次变更发 `cron/change`：既驱动调度器重新武装，也推送 SSE 通知
-- 客户端策略：初次拉取 + SSE 实时更新 + 30s 轮询 + 窗口聚焦时刷新（SSE 断开自动兜底）
+## 快速上手（30 秒）
 
-## 安装与挂载
+1. 打开 DeepSeek Harness（已安装本插件的前提下，见[安装手册](INSTALL.md)）；
+2. 在任意对话里说一句，例如：
+   > 每天早上 9 点跑一次回归测试，用高推理强度，项目用 /path/to/my/repo
+3. AI 会调用 `cron_create` 帮你建好任务；
+4. 点侧边栏底部的「**已安排**」，就能看到这个任务，随时暂停、编辑或删除。
 
-### 桌面应用（DSH Desktop）
+> 提示：所有任务都可以在「已安排」页面里直接改，不一定要重新说一遍。
 
-⚠️ **不要直接 `pnpm add` 进 web profile**：桌面应用启动时会把 profile 的
-`package.json`/`node_modules` 重写为其管理的集合（dsh-remote 等捆绑插件），
-任何手工加进去的依赖会在下次启动被清除（日志表现为
-`Cannot find package '@dsh/cron' imported from .../profiles/web/`）。
+---
 
-桌面端正确的持久化安装位置是**扁平 fallback 目录**
-`$DSH_HOME/profiles/node_modules/`（app-boot 的 `healProfilesModuleFallback`
-维护它，只增不减；桌面自己的 `@dsh-desktop/integration` 也装在这里）：
+## 「已安排」页面说明
 
-```bash
-# 1. 符号链接到 fallback 目录（Node 从 profile 的父目录 walk 会命中它）
-mkdir -p "$DSH_HOME/profiles/node_modules/@dsh"
-ln -sfn /path/to/dsh-cron "$DSH_HOME/profiles/node_modules/@dsh/cron"
+入口在**会话头部**和**侧边栏底部**的「已安排」按钮，点击打开**全屏页面**：
 
-# 2. 挂载（追加到 $DSH_HOME/profiles/web/cordis.patch.yml）
-```
+- **分组筛选**：全部 / 已开启 / 已暂停，每个分组带数量；
+- **调度建议**：页面底部有"每天早上 9 点""每天晚上 21 点"两个快捷卡片，点一下自动预填频率，填上任务说明就能建；
+- **新建**：右上角蓝色「新建」按钮，手动填写任务说明、运行方式、项目、模型、频率等；
+- **任务详情**：点任意任务行，右侧展开抽屉：
+  - 任务说明（可直接编辑，保存即生效）
+  - 运行于：新聊天 / 现有聊天（现有聊天需填会话 ID）
+  - 项目：从已有工作区里选（也可以手动添加工作区）
+  - 模型 / 推理强度（off / high / max）
+  - 频率：cron 表达式 + 常用预设 + 实时中文预览
+  - 运行历史：最近 5 次运行结果
+  - 底部：删除 / 保存
+- **暂停与恢复**：列表行内的小图标，暂停后任务不再触发，恢复后按新时间重新排期。
 
-```yaml
-- insert:
-    - id: cron
-      name: '@dsh/cron'
-      config:
-        timezone: Asia/Shanghai   # 默认时区
-        catchUp: false            # 是否补跑错过的 occurrence
-        maxLiveRunAgents: 20      # 保留的 run agent 上限（释放后会话 JSONL 仍在）
-        defaultProvider: deepseek-official
-        defaultModel: deepseek-v4-flash
-```
+---
 
-### 非桌面（CLI 直启）
+## 安装
 
-CLI 场景（`dsh --profile web` 由你自己启动，没有桌面维护进程）可直接 pnpm 安装：
-`dsh plugin --profile web add /path/to/dsh-cron`，再挂载同一段 patch。
+分两种方式，详见 **[_安装手册（INSTALL.md）_](INSTALL.md)**：
 
-重启（或 HMR 热更新）后，任意 root agent 即获得 `cron_*` 工具。自然语言创建示例：
+- **DSH 桌面应用**（推荐）：一个符号链接 + 一行配置，重启即用；
+- **CLI 直启**（`dsh --profile web`）：一条命令安装，再挂载配置。
 
-> “每天早上 9 点跑一次回归测试，用高推理强度，项目用 /path/to/my/repo”
+---
 
-agent 会调用 `cron_create`，参数如下：
+## 工作原理（极简版）
 
 ```
-cron_create({
-  prompt: '跑一次回归测试并给出结论',
-  schedule: { expression: '0 9 * * *', timezone: 'Asia/Shanghai' },
-  target: { kind: 'new-chat', project: '/path/to/my/repo', reasoningEffort: 'high' },
-  title: '每日回归测试'
-})
+对话里创建任务 ──> 任务表（磁盘 jobs.json）
+                        │
+           调度器周期性检查
+                        │
+       到点 ──> 开一个 AI 会话（或投递到指定会话）执行任务说明
+                        │
+              记录运行历史，结果发到会话
 ```
 
-## 行为语义
+- 管理工具：`cron_create` / `cron_list` / `cron_update` / `cron_delete` / `cron_pause` / `cron_resume`（AI 在对话里帮你调用）；
+- 浏览器 UI 走本地 `/cron-api` 接口，实时刷新；
+- 漏跑策略：默认跳过错过的时间点（`catchUp: false`），可以配置为补跑。
 
-- **claim 即持久化**：到点先把 `lastRunAt`/`nextRunAt` 落盘再执行，进程崩溃不会重复执行同一 occurrence
-- **不重复运行**：claim 后 `nextRunAt` 严格取 `now` 之后的 occurrence，同一分钟内不会二次触发
-- **漏跑**：occurrence 晚于 60s 宽限且 `catchUp: false` → 跳过并记 `skipped`；`catchUp: true` → 补跑最早的错过 occurrence 一次
-- **不可达日期**（如 `0 0 30 2 *`）→ 无未来 occurrence，任务自动禁用并告警
-- **执行失败隔离**：每次运行 try/catch 包裹，记 `failed` 历史 + 发 `cron/run` 事件，不影响其他任务
-- **时区变更/恢复**：任务存 IANA 时区；`cron_update` 改表达式/时区、`cron_resume` 恢复过期任务时都从 `now` 重算 `nextRunAt`
+---
 
-## 错误码（closed union）
+## 配置项
 
-`invalid_expression` / `invalid_time_zone` / `invalid_target` / `invalid_prompt` / `invalid_id` / `not_found` / `persistence_uncertain` / `internal_error`
+挂载时的 `config` 字段（一般不用动，默认值已适用）：
+
+| 配置 | 默认值 | 说明 |
+|---|---|---|
+| `timezone` | `Asia/Shanghai` | 任务默认时区 |
+| `catchUp` | `false` | 错过的时间点是否补跑 |
+| `maxLiveRunAgents` | `20` | 同时保留的运行会话上限 |
+| `defaultProvider` | `deepseek-official` | 运行任务用的模型服务商 |
+| `defaultModel` | `deepseek-v4-flash` | 运行任务用的默认模型 |
+
+---
 
 ## 开发
 
 ```bash
-node --test "test/*.test.js"   # 51 个用例（引擎 / store / runtime / service / api / tools）
+node --test "test/*.test.js"   # 51 个单元测试（引擎 / 存储 / 调度 / 接口 / 工具）
 ```
 
-`node_modules/` 下是指向 DSH 安装的符号链接（仅本地跑测试用；`files` 只发布 `lib`）。
+`node_modules/` 下是指向 DSH 安装的符号链接（仅本地跑测试用）。
 
-## 后续（P2+）
-
-- 详情编辑表单（schema 驱动，P2）
-- 运行历史 UI（订阅 `cron/run` 事件）
-- 通知通道（Web 通知 / IM 机器人）
-- cron-parser 替换自研引擎（如需 6 段秒级表达式）
+---
 
 ## License
 
