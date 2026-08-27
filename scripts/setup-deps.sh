@@ -7,7 +7,12 @@
 # Usage:
 #   bash scripts/setup-deps.sh                  # auto-detect the desktop app
 #   DSH_APP_DIR=/path/to/dsh bash scripts/setup-deps.sh   # custom install
-set -euo pipefail
+#
+# Works on macOS system bash 3.2 and newer; deliberately avoids `set -u`
+# (its unbound-variable trap varies across bash versions and only ever
+# fires on harmless reporting here — correctness is enforced by the
+# explicit `[ -z "$src" ]` guard instead).
+set -eo pipefail
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 
