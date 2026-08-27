@@ -35,7 +35,23 @@ git clone https://github.com/xiaohaoxing/dsh-cron.git /Users/you/repos/dsh-cron
 
 > 之后想更新插件，直接 `git -C /Users/you/repos/dsh-cron pull` 再重启应用即可。
 
-### 第 2 步：符号链接到 fallback 目录
+### 第 2 步：链接框架依赖（重要）
+
+插件用到 DSH 框架的一个包（`@deepseek-ai/dsh-tools`），而 clone 下来的仓库**不带** `node_modules`。
+不链接的话，启动时会报 `Cannot find package '@deepseek-ai/dsh-tools' imported from .../lib/index.js`。
+
+仓库里带了一键脚本，自动探测你的 DSH 安装并建好链接（幂等，可重复执行）：
+
+```bash
+cd /Users/you/repos/dsh-cron
+bash scripts/setup-deps.sh
+```
+
+- 默认探测 `/Applications/DSH Desktop.app`；
+- 如果 DSH 装在别处，用 `DSH_APP_DIR=/path/to/dsh bash scripts/setup-deps.sh`；
+- 输出 `依赖就绪` 即成功；重复执行会显示"已存在（跳过）"。
+
+### 第 3 步：符号链接到 fallback 目录
 
 DSH 桌面应用会从一个"扁平 fallback 目录"加载额外插件：
 `$DSH_HOME/profiles/node_modules/`（`$DSH_HOME` 一般是 `~/.dsh`）。
@@ -53,7 +69,7 @@ ls -la "$HOME/.dsh/profiles/node_modules/@dsh/"
 # cron -> /Users/you/repos/dsh-cron
 ```
 
-### 第 3 步：挂载配置
+### 第 4 步：挂载配置
 
 编辑 profile 配置 `$HOME/.dsh/profiles/web/cordis.patch.yml`，**追加**以下内容：
 
@@ -73,11 +89,11 @@ ls -la "$HOME/.dsh/profiles/node_modules/@dsh/"
 
 > 如果文件里已经有 `@dsh/cron` 的这段，把旧的 `@walltech/dsh-cron` 那一行改成 `@dsh/cron` 即可（id `cron` 保持不变）。
 
-### 第 4 步：重启应用
+### 第 5 步：重启应用
 
 完全退出并重新打开 DSH 桌面应用（或重启 harness）。
 
-### 第 5 步：验证
+### 第 6 步：验证
 
 重启后确认三件事：
 
@@ -92,14 +108,20 @@ ls -la "$HOME/.dsh/profiles/node_modules/@dsh/"
 CLI 场景没有桌面维护进程，可以直接让 dsh 安装插件：
 
 ```bash
+# 先链接框架依赖（同方式一第 2 步，探测到 CLI 安装会自动识别）
+bash /Users/you/repos/dsh-cron/scripts/setup-deps.sh
+
 dsh plugin --profile web add /Users/you/repos/dsh-cron
 ```
 
-然后同样在 `cordis.patch.yml` 追加第 3 步那一段（id `cron`，name `@dsh/cron`），重启 `dsh` 进程。
+然后同样在 `cordis.patch.yml` 追加第 4 步那一段（id `cron`，name `@dsh/cron`），重启 `dsh` 进程。
 
 ---
 
 ## 常见问题（FAQ）
+
+**Q：日志报 `Cannot find package '@deepseek-ai/...' imported from .../dsh-cron/lib/index.js`**
+A：仓库缺少框架依赖链接（clone 后没跑第 2 步）。执行 `bash <仓库路径>/scripts/setup-deps.sh` 再重启。
 
 **Q：日志报 `Cannot find package '@dsh/cron' imported from .../profiles/web/`**
 A：插件没被找到。检查：① 符号链接是否在 `$HOME/.dsh/profiles/node_modules/@dsh/cron`；② 链接目标目录里是否有 `package.json`；③ 重启过没有。

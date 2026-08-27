@@ -45,7 +45,7 @@ agent 会 `cron_create` 建好任务；侧边栏「已安排」可管理全部�
 
 ## 安装
 
-见 [INSTALL.md](INSTALL.md)——桌面应用走 fallback 目录符号链接 + `cordis.patch.yml` 挂载（不要 `pnpm add` 进 profile，桌面会清掉）；CLI 直启用 `dsh plugin --profile web add`。
+见 [INSTALL.md](INSTALL.md)——clone 后先 `bash scripts/setup-deps.sh` 链接框架依赖（`@deepseek-ai/dsh-tools`），桌面应用再走 fallback 目录符号链接 + `cordis.patch.yml` 挂载（不要 `pnpm add` 进 profile，桌面会清掉）；CLI 直启用 `dsh plugin --profile web add`。
 
 ## 配置
 
@@ -59,6 +59,7 @@ agent 会 `cron_create` 建好任务；侧边栏「已安排」可管理全部�
 ## 开发
 
 ```bash
+bash scripts/setup-deps.sh     # 链接 @deepseek-ai/dsh-tools（插件唯一框架依赖）
 node --test "test/*.test.js"   # 51 用例：引擎 / 存储 / 调度 / service / api / tools
 ```
 
