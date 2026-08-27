@@ -67,6 +67,18 @@ test('service: updateJob recomputes nextRunAt on schedule change and toggles ena
   assert.equal(missing.error.code, 'not_found')
 })
 
+test('service: updateJob switching existing-chat to new-chat drops the stale sessionId', (t) => {
+  const { store, runtime, defaults, base, cleanup } = setup()
+  t.after(cleanup)
+  createJob(runtime, defaults, { ...base, target: { kind: 'existing-chat', sessionId: 'session-abc' } })
+  assert.equal(store.get('cron-1').target.sessionId, 'session-abc')
+  const updated = updateJob(runtime, 'cron-1', { target: { kind: 'new-chat', project: '/tmp/p' } })
+  assert.equal(updated.ok, true)
+  assert.equal(updated.view.target.kind, 'new-chat')
+  assert.equal(updated.view.target.sessionId, undefined)
+  assert.equal(updated.view.target.project, '/tmp/p')
+})
+
 test('service: pause/resume/delete/list behave', (t) => {
   const { store, runtime, defaults, base, cleanup } = setup()
   t.after(cleanup)
