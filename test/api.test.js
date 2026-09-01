@@ -133,6 +133,35 @@ test('api: POST creates and PATCH/DELETE mutate with error mapping', async (t) =
   assert.equal(unknown.body.deleted, false)
 })
 
+test('api: POST/PATCH carry target.permissionMode and reject bad values', async (t) => {
+  const { store, call, cleanup } = setup()
+  t.after(cleanup)
+  const created = await call('POST', '/cron-api/jobs', JSON.stringify({
+    prompt: 'do it',
+    schedule: { expression: '0 9 * * *' },
+    target: { kind: 'new-chat', permissionMode: 'danger-full-access' },
+  }))
+  assert.equal(created.status, 200)
+  assert.equal(created.body.view.target.permissionMode, 'danger-full-access')
+  assert.equal(store.get('cron-1').target.permissionMode, 'danger-full-access')
+  const bad = await call('POST', '/cron-api/jobs', JSON.stringify({
+    prompt: 'x',
+    schedule: { expression: '0 9 * * *' },
+    target: { permissionMode: 'sudo' },
+  }))
+  assert.equal(bad.status, 400)
+  assert.equal(bad.body.code, 'invalid_target')
+  const patched = await call('PATCH', '/cron-api/jobs/cron-1', JSON.stringify({ target: { permissionMode: 'read-only' } }))
+  assert.equal(patched.status, 200)
+  assert.equal(patched.body.view.target.permissionMode, 'read-only')
+  assert.equal(store.get('cron-1').target.permissionMode, 'read-only')
+  // PATCH permissionMode:null clears the pin (inherit the deployment default).
+  const unset = await call('PATCH', '/cron-api/jobs/cron-1', JSON.stringify({ target: { permissionMode: null } }))
+  assert.equal(unset.status, 200)
+  assert.equal(unset.body.view.target.permissionMode, undefined)
+  assert.equal(store.get('cron-1').target.permissionMode, undefined)
+})
+
 test('api: SSE stream broadcasts cron/change and cron/run', async (t) => {
   const { ctx, handler, cleanup } = setup()
   t.after(cleanup)
@@ -172,4 +201,29 @@ test('api: mutations broadcast change to connected SSE clients (no recursion)', 
   assert.ok(sse.chunks.some((c) => c.includes('event: change')), 'SSE client must receive change after PATCH')
   sseReq.emit('close')
   sse.emit('close')
+})
+
+test('api: mutations emit cron/change on the plugin context (scheduler re-arm)', async (t) => {
+  // Regression: UI mutations previously only broadcast to SSE and never emitted
+  // `cron/change`, so the scheduler was never re-armed for a UI-created job
+  // (it sat overdue until some unrelated drive happened). The mutation path
+  // must emit on the context — index.js listens for that to call
+  // `runtime.requestDrive()`.
+  const { ctx, handler, cleanup } = setup()
+  t.after(cleanup)
+  let changes = 0
+  const off = ctx.on('cron/change', () => { changes += 1 })
+  const post = makeRes()
+  await handler(makeReq('POST', '/cron-api/jobs', JSON.stringify({ prompt: 'do it', schedule: { expression: '0 9 * * *' } })), post)
+  assert.equal(post.status, 200)
+  assert.equal(changes, 1, 'POST must emit cron/change on the plugin context')
+  const patch = makeRes()
+  await handler(makeReq('PATCH', '/cron-api/jobs/cron-1', JSON.stringify({ enabled: false })), patch)
+  assert.equal(patch.status, 200)
+  assert.equal(changes, 2, 'PATCH must emit cron/change on the plugin context')
+  const del = makeRes()
+  await handler(makeReq('DELETE', '/cron-api/jobs/cron-1'), del)
+  assert.equal(del.status, 200)
+  assert.equal(changes, 3, 'DELETE must emit cron/change on the plugin context')
+  off()
 })

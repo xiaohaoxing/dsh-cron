@@ -72,6 +72,35 @@ test('tools: cron_create rejects bad expressions and missing existing-chat sessi
   assert.equal(noPrompt.code, 'invalid_prompt')
 })
 
+test('tools: cron_create/cron_update carry target.permissionMode and reject bad values', async (t) => {
+  const { store, execute, registered, cleanup } = setup()
+  t.after(cleanup)
+  const created = await execute('cron_create', {
+    prompt: 'a',
+    schedule: { expression: '0 9 * * *' },
+    target: { kind: 'new-chat', permissionMode: 'danger-full-access' },
+  })
+  assert.equal(created.id, 'cron-1')
+  assert.equal(store.get('cron-1').target.permissionMode, 'danger-full-access')
+  assert.equal(created.target.permissionMode, 'danger-full-access')
+  // Unknown modes fail at tool-args validation (the schema enum), before the
+  // service layer — assert the framework rejection.
+  await assert.rejects(
+    execute('cron_create', { prompt: 'x', schedule: { expression: '0 9 * * *' }, target: { kind: 'new-chat', permissionMode: 'sudo' } }),
+    /permissionMode/
+  )
+  const updated = await execute('cron_update', { id: 'cron-1', target: { kind: 'new-chat', permissionMode: 'read-only' } })
+  assert.equal(updated.target.permissionMode, 'read-only')
+  assert.equal(store.get('cron-1').target.permissionMode, 'read-only')
+  // null is accepted by the tool args schema and clears the pin.
+  const unset = await execute('cron_update', { id: 'cron-1', target: { kind: 'new-chat', permissionMode: null } })
+  assert.equal(unset.target.permissionMode, undefined)
+  assert.equal(store.get('cron-1').target.permissionMode, undefined)
+  // The output schema's target branch declares the mode (no leakage on views).
+  const viewSchema = registered.get('cron_create').output.schema.oneOf[0]
+  assert.equal(viewSchema.properties.target.properties.permissionMode.enum.includes('danger-full-access'), true)
+})
+
 test('tools: cron_list returns views with overdue state', async (t) => {
   const { store, execute, cleanup } = setup()
   t.after(cleanup)

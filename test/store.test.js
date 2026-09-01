@@ -122,6 +122,33 @@ test('validateJob enforces existing-chat sessionId and safe id charset', () => {
   assert.doesNotThrow(() => validateJob(baseJob({ target: { kind: 'existing-chat', sessionId: 'abc-123' } })))
 })
 
+test('validateJob accepts every sandbox permission mode and rejects anything else', () => {
+  for (const mode of ['read-only', 'workspace-write', 'danger-full-access']) {
+    const job = validateJob(baseJob({ target: { kind: 'new-chat', permissionMode: mode } }))
+    assert.equal(job.target.permissionMode, mode)
+  }
+  assert.equal(validateJob(baseJob({ target: { kind: 'new-chat' } })).target.permissionMode, undefined)
+  // null is the "clear" marker: the pin is dropped, never persisted as null.
+  assert.equal(validateJob(baseJob({ target: { kind: 'new-chat', permissionMode: null } })).target.permissionMode, undefined)
+  assert.throws(() => validateJob(baseJob({ target: { kind: 'new-chat', permissionMode: 'sudo' } })), /permissionMode/)
+  assert.throws(() => validateJob(baseJob({ target: { kind: 'new-chat', permissionMode: 42 } })), /permissionMode/)
+})
+
+test('store: permissionMode survives the save/load roundtrip', () => {
+  const root = tempRoot()
+  try {
+    const store = new CronStore(quietCtx(), root)
+    store.load()
+    store.upsert(baseJob({ id: 'cron-1', target: { kind: 'new-chat', permissionMode: 'danger-full-access' } }))
+    store.save()
+    const reloaded = new CronStore(quietCtx(), root)
+    reloaded.load()
+    assert.equal(reloaded.get('cron-1').target.permissionMode, 'danger-full-access')
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('assertScheduleValid rejects bad expressions and timezones', () => {
   assert.throws(() => assertScheduleValid('61 * * * *', 'UTC'), CronExpressionError)
   assert.throws(() => assertScheduleValid('0 9 * * *', 'Shanghai'), CronExpressionError)

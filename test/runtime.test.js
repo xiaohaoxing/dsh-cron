@@ -12,8 +12,15 @@ function tempRoot() {
 }
 
 function fakeAgent(sessionId) {
+  const session = {
+    id: sessionId,
+    events: [],
+    append(type, data) {
+      this.events.push({ type, data })
+    },
+  }
   return {
-    session: { id: sessionId },
+    session,
     followup() {},
     runMaintenance: async (job) => job(),
     dispose: async () => {},
@@ -21,7 +28,7 @@ function fakeAgent(sessionId) {
 }
 
 /** Mock cordis context: enough of agents/emit/logger for the runtime. */
-function makeCtx({ live = new Map(), onCreate, onResume, agentPresets } = {}) {
+function makeCtx({ live = new Map(), onCreate, onResume, agentPresets, workspaceRegistry } = {}) {
   const observations = { emits: [], warns: [], created: [], resumed: [] }
   const ctx = {
     observations,
@@ -29,6 +36,7 @@ function makeCtx({ live = new Map(), onCreate, onResume, agentPresets } = {}) {
       warn: (message) => observations.warns.push(String(message)),
     },
     emit: (name, payload) => observations.emits.push({ name, payload }),
+    get: (key) => (key === 'workspaceRegistry' ? workspaceRegistry : undefined),
     agents: {
       withoutInitiator: (fn) => fn(),
       get: (id) => live.get(id),
@@ -147,6 +155,183 @@ test('runtime: new-chat run carries project cwd, provider, model, reasoningEffor
     assert.equal(created.agentOptions.provider, 'deepseek-official')
     assert.equal(created.agentOptions.model, 'deepseek-v4-flash')
     assert.equal(created.agentOptions.reasoningEffort, 'high')
+    await runtime.dispose()
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('runtime: new-chat run attaches its session to the workspace owning the project cwd', async () => {
+  const root = tempRoot()
+  try {
+    const store = new CronStore({ logger: { warn: () => {} } }, root)
+    store.load()
+    const attached = []
+    const workspace = {
+      path: '/tmp/proj',
+      attachSession: async (sessionId) => attached.push(sessionId),
+    }
+    const workspaceRegistry = {
+      resolveByPath: async (path) => (path === '/tmp/proj' ? workspace : undefined),
+    }
+    store.upsert(jobWith({
+      nextRunAt: nowIso(Date.now() - 1000),
+      target: { kind: 'new-chat', project: '/tmp/proj' },
+    }))
+    store.save()
+    const ctx = makeCtx({ workspaceRegistry })
+    const runtime = new CronRuntime(ctx, store, { catchUp: true })
+    runtime.start()
+    await settle()
+    assert.equal(attached.length, 1, 'run session attached to the owning workspace')
+    const created = ctx.observations.created[0]
+    assert.equal(attached[0], created.sessionId, 'attached the exact run session id')
+    await runtime.dispose()
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('runtime: new-chat run with no owning workspace is left ungrouped without error', async () => {
+  const root = tempRoot()
+  try {
+    const store = new CronStore({ logger: { warn: () => {} } }, root)
+    store.load()
+    const workspaceRegistry = {
+      resolveByPath: async () => undefined,
+    }
+    store.upsert(jobWith({
+      nextRunAt: nowIso(Date.now() - 1000),
+      target: { kind: 'new-chat', project: '/tmp/none' },
+    }))
+    store.save()
+    const ctx = makeCtx({ workspaceRegistry })
+    const runtime = new CronRuntime(ctx, store, { catchUp: true })
+    runtime.start()
+    await settle()
+    assert.equal(ctx.observations.created.length, 1, 'run still executed')
+    assert.ok(ctx.observations.warns.every((w) => !w.includes('attach run session')), 'no attach warning for an unowned path')
+    await runtime.dispose()
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('runtime: new-chat run without a project still pins a cwd (persona {{cwd}} never empty)', async () => {
+  const root = tempRoot()
+  try {
+    const store = new CronStore({ logger: { warn: () => {} } }, root)
+    store.load()
+    store.upsert(jobWith({
+      nextRunAt: nowIso(Date.now() - 1000),
+      target: { kind: 'new-chat' },
+    }))
+    store.save()
+    const ctx = makeCtx()
+    const runtime = new CronRuntime(ctx, store, { catchUp: true })
+    runtime.start()
+    await settle()
+    const created = ctx.observations.created[0]
+    // Regression: a run with no bound project used to omit meta.cwd entirely,
+    // leaving session.header.cwd undefined — the deployment agent preset then
+    // failed prompt assembly on the persona's {{cwd}} variable. The runtime
+    // must always provide a cwd so the run agent can start.
+    assert.ok(created.meta && typeof created.meta.cwd === 'string', 'meta.cwd must be pinned')
+    assert.ok(created.meta.cwd.length > 0, 'meta.cwd must be non-empty')
+    await runtime.dispose()
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('runtime: new-chat run appends one sandbox/mode event with the job permission mode', async () => {
+  const root = tempRoot()
+  try {
+    const store = new CronStore({ logger: { warn: () => {} } }, root)
+    store.load()
+    let runSession = null
+    store.upsert(jobWith({
+      nextRunAt: nowIso(Date.now() - 1000),
+      target: { kind: 'new-chat', permissionMode: 'workspace-write' },
+    }))
+    store.save()
+    const ctx = makeCtx({
+      onCreate: (agent) => { runSession = agent.session },
+    })
+    const runtime = new CronRuntime(ctx, store, { catchUp: true })
+    runtime.start()
+    await settle()
+    assert.ok(runSession !== null, 'run agent created')
+    assert.deepEqual(runSession.events, [{ type: 'sandbox/mode', data: { mode: 'workspace-write' } }])
+    await runtime.dispose()
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('runtime: existing-chat live run pins the permission mode on the live session', async () => {
+  const root = tempRoot()
+  try {
+    const store = new CronStore({ logger: { warn: () => {} } }, root)
+    store.load()
+    const liveAgent = fakeAgent('existing-session-1')
+    const ctx = makeCtx({ live: new Map([['existing-session-1', liveAgent]]) })
+    store.upsert(jobWith({
+      nextRunAt: nowIso(Date.now() - 1000),
+      target: { kind: 'existing-chat', sessionId: 'existing-session-1', permissionMode: 'read-only' },
+    }))
+    store.save()
+    const runtime = new CronRuntime(ctx, store, { catchUp: true })
+    runtime.start()
+    await settle()
+    assert.deepEqual(liveAgent.session.events, [{ type: 'sandbox/mode', data: { mode: 'read-only' } }])
+    await runtime.dispose()
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('runtime: existing-chat resume pins the permission mode on the resumed session', async () => {
+  const root = tempRoot()
+  try {
+    const store = new CronStore({ logger: { warn: () => {} } }, root)
+    store.load()
+    let resumedSession = null
+    const ctx = makeCtx({
+      onResume: (agent) => { resumedSession = agent.session },
+    })
+    store.upsert(jobWith({
+      nextRunAt: nowIso(Date.now() - 1000),
+      target: { kind: 'existing-chat', sessionId: 'persisted-1', permissionMode: 'danger-full-access' },
+    }))
+    store.save()
+    const runtime = new CronRuntime(ctx, store, { catchUp: true })
+    runtime.start()
+    await settle()
+    assert.ok(resumedSession !== null, 'session resumed from persistence')
+    assert.deepEqual(resumedSession.events, [{ type: 'sandbox/mode', data: { mode: 'danger-full-access' } }])
+    await runtime.dispose()
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('runtime: no permission mode pin appends no sandbox event', async () => {
+  const root = tempRoot()
+  try {
+    const store = new CronStore({ logger: { warn: () => {} } }, root)
+    store.load()
+    let runSession = null
+    const ctx = makeCtx({
+      onCreate: (agent) => { runSession = agent.session },
+    })
+    store.upsert(jobWith({ nextRunAt: nowIso(Date.now() - 1000), target: { kind: 'new-chat' } }))
+    store.save()
+    const runtime = new CronRuntime(ctx, store, { catchUp: true })
+    runtime.start()
+    await settle()
+    assert.ok(runSession !== null, 'run agent created')
+    assert.deepEqual(runSession.events, [], 'no sandbox/mode event when the job has no permissionMode')
     await runtime.dispose()
   } finally {
     rmSync(root, { recursive: true, force: true })

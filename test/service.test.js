@@ -49,6 +49,52 @@ test('service: createJob validation errors use closed-union codes', (t) => {
   assert.deepEqual(noPrompt.error.code, 'invalid_prompt')
 })
 
+test('service: createJob pins and validates target.permissionMode', (t) => {
+  const { store, runtime, defaults, base, cleanup } = setup()
+  t.after(cleanup)
+  const created = createJob(runtime, defaults, { ...base, target: { kind: 'new-chat', permissionMode: 'danger-full-access' } })
+  assert.equal(created.ok, true)
+  assert.equal(created.view.target.permissionMode, 'danger-full-access')
+  assert.equal(store.get('cron-1').target.permissionMode, 'danger-full-access')
+  for (const mode of ['read-only', 'workspace-write']) {
+    const ok = createJob(runtime, defaults, { ...base, prompt: mode, target: { kind: 'new-chat', permissionMode: mode } })
+    assert.equal(ok.ok, true)
+    assert.equal(ok.view.target.permissionMode, mode)
+  }
+  const bad = createJob(runtime, defaults, { ...base, prompt: 'bad', target: { kind: 'new-chat', permissionMode: 'sudo' } })
+  assert.equal(bad.ok, false)
+  assert.equal(bad.error.code, 'invalid_target')
+  assert.match(bad.error.message, /permissionMode/)
+  // null means "inherit the deployment default": the pin is not persisted.
+  const cleared = createJob(runtime, defaults, { ...base, prompt: 'null', target: { kind: 'new-chat', permissionMode: null } })
+  assert.equal(cleared.ok, true)
+  assert.equal(cleared.view.target.permissionMode, undefined)
+  assert.equal(store.get(cleared.view.id).target.permissionMode, undefined)
+})
+
+test('service: updateJob patches permissionMode and keeps it on partial target patches', (t) => {
+  const { store, runtime, defaults, base, cleanup } = setup()
+  t.after(cleanup)
+  createJob(runtime, defaults, { ...base, target: { kind: 'new-chat' } })
+  const pinned = updateJob(runtime, 'cron-1', { target: { permissionMode: 'workspace-write' } })
+  assert.equal(pinned.ok, true)
+  assert.equal(pinned.view.target.permissionMode, 'workspace-write')
+  // A partial target patch (kind only) must preserve the pinned mode.
+  const partial = updateJob(runtime, 'cron-1', { target: { kind: 'new-chat', project: '/tmp/p' } })
+  assert.equal(partial.ok, true)
+  assert.equal(partial.view.target.permissionMode, 'workspace-write')
+  assert.equal(partial.view.target.project, '/tmp/p')
+  const bad = updateJob(runtime, 'cron-1', { target: { permissionMode: 'sudo' } })
+  assert.equal(bad.ok, false)
+  assert.equal(bad.error.code, 'invalid_target')
+  assert.equal(store.get('cron-1').target.permissionMode, 'workspace-write', 'invalid patch must not mutate the job')
+  // null explicitly clears the pin back to the deployment default.
+  const unset = updateJob(runtime, 'cron-1', { target: { permissionMode: null } })
+  assert.equal(unset.ok, true)
+  assert.equal(unset.view.target.permissionMode, undefined)
+  assert.equal(store.get('cron-1').target.permissionMode, undefined)
+})
+
 test('service: updateJob recomputes nextRunAt on schedule change and toggles enabled', (t) => {
   const { store, runtime, defaults, base, cleanup } = setup()
   t.after(cleanup)
