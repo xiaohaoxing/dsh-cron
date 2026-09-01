@@ -4,6 +4,10 @@
 # has no node_modules — that missing-link failure surfaces as
 # ERR_MODULE_NOT_FOUND for '@deepseek-ai/dsh-tools' on harness boot).
 #
+# NOTE: only needed for the OFFLINE / manual fallback install. Standard install
+# packages this plugin as a bundle (dsh.bundle.patch) and resolves these deps
+# from the harness's shared fallback at runtime — see INSTALL.md.
+#
 # Usage:
 #   bash scripts/setup-deps.sh                  # auto-detect the desktop app
 #   DSH_APP_DIR=/path/to/dsh bash scripts/setup-deps.sh   # custom install
@@ -54,6 +58,8 @@ for pkg in dsh-tools cordis; do
   fi
 done
 echo
-echo "依赖就绪（来自 $src）。接下来按 INSTALL.md 继续："
+echo "依赖就绪（来自 $src）。标准安装其实不用走这里："
+echo "  dsh plugin --profile web add github:xiaohaoxing/dsh-cron"
+echo "离线/手动 fallback 才需要继续（详见 INSTALL.md）："
 echo "  ln -sfn \"$repo\" \"\$HOME/.dsh/profiles/node_modules/@dsh/cron\""
 echo "  并在 cordis.patch.yml 挂载 @dsh/cron 后重启 harness。"

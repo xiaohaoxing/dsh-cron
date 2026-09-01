@@ -46,7 +46,15 @@ agent 会 `cron_create` 建好任务；侧边栏「已安排」可管理全部�
 
 ## 安装
 
-见 [INSTALL.md](INSTALL.md)——clone 后先 `bash scripts/setup-deps.sh` 链接框架依赖（`@deepseek-ai/dsh-tools`），桌面应用再走 fallback 目录符号链接 + `cordis.patch.yml` 挂载（不要 `pnpm add` 进 profile，桌面会清掉）；CLI 直启用 `dsh plugin --profile web add`。
+本插件是标准 bundle（声明 `dsh.bundle.patch`），一条命令即装好，自动挂载补丁层，无需手动符号链接或改 profile：
+
+```bash
+# 桌面端：设置 → Plugins 页粘贴 github:xiaohaoxing/dsh-cron；或
+# CLI 直启：
+dsh plugin --profile web add github:xiaohaoxing/dsh-cron
+```
+
+装完重启 harness，「已安排」入口即出现在会话头部与侧边栏底部。细节（含纯本地 clone 的替代路径）见 [INSTALL.md](INSTALL.md)。
 
 ## 配置
 
@@ -60,8 +68,8 @@ agent 会 `cron_create` 建好任务；侧边栏「已安排」可管理全部�
 ## 开发
 
 ```bash
-bash scripts/setup-deps.sh     # 链接 @deepseek-ai/dsh-tools（插件唯一框架依赖）
-node --test "test/*.test.js"   # 51 用例：引擎 / 存储 / 调度 / service / api / tools
+bash scripts/setup-deps.sh     # 仅离线/手动 fallback 路径需要：链接 @deepseek-ai/dsh-tools 等到仓库 node_modules
+node --test "test/*.test.js"   # 65 用例：引擎 / 存储 / 调度 / service / api / tools
 ```
 
 ## License

@@ -1,12 +1,8 @@
-# @dsh/cron — 挂载样例
+# @dsh/cron — bundle 自声明补丁层
 #
-# 把下面这段 insert 追加到 profile 的用户 patch 层：
-#   $DSH_HOME/profiles/<name>/cordis.patch.yml
-# （桌面端即当前 GUI 使用的 profile，通常是 web）
-#
-# 安装依赖：
-#   dsh plugin --profile <name> add @dsh/cron
-#   （或桌面端 Plugins 页安装本地/GitHub 包）
+# 由 package.json 的 dsh.bundle.patch 指向；profile 把本包加入 dsh.profile.bundles
+# 时，本文件即该包的 entry 声明（id+name 都必须有——loader 用 name import，缺则崩溃）。
+# 用户可在 profile/cordis.patch.yml 里以同名 id 覆盖 config（patch 叠加语义，后覆盖先）。
 #
 # config 说明：
 #   root          cron 任务表目录，默认 dshHomePath('cron')（$DSH_HOME/cron）
